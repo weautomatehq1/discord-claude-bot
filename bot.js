@@ -1,13 +1,18 @@
-const { Client, GatewayIntentBits } = require('discord.js')
+const { Client, GatewayIntentBits, Partials } = require('discord.js')
 const { spawn } = require('child_process')
 require('dotenv').config()
+
+const { handleIFleetMention, pendingApprovals } = require('./ifleet-handler')
+const { registerReactionWatcher } = require('./ifleet-issuer')
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-  ]
+    GatewayIntentBits.GuildMessageReactions,
+  ],
+  partials: [Partials.Message, Partials.Reaction, Partials.Channel],
 })
 
 const ALLOWED_CHANNELS = process.env.ALLOWED_CHANNELS?.split(',') ?? []
@@ -35,10 +40,17 @@ client.on('ready', () => {
   console.log(`✓ Listening on channels: ${ALLOWED_CHANNELS.join(', ')}`)
 })
 
+registerReactionWatcher(client, pendingApprovals)
+
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return
   if (!ALLOWED_CHANNELS.includes(message.channelId)) return
   if (ALLOWED_USERS.length && !ALLOWED_USERS.includes(message.author.id)) return
+
+  if (message.mentions.has(client.user)) {
+    await handleIFleetMention(message, client)
+    return
+  }
 
   const thinking = await message.reply('_thinking..._')
 
