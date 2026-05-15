@@ -47,6 +47,8 @@ client.on('messageCreate', async (message) => {
   if (!ALLOWED_CHANNELS.includes(message.channelId)) return
   if (ALLOWED_USERS.length && !ALLOWED_USERS.includes(message.author.id)) return
 
+  if (message.content.startsWith('!!')) return
+
   if (message.mentions.has(client.user)) {
     await handleIFleetMention(message, client)
     return
