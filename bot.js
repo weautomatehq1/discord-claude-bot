@@ -83,4 +83,12 @@ client.on('messageCreate', async (message) => {
   })
 })
 
+const REQUIRED_ENV = ['DISCORD_BOT_TOKEN'];
+const _missing = REQUIRED_ENV.filter(k => !process.env[k]);
+if (_missing.length) {
+  console.error('[startup] Required env missing:', _missing.join(', '),
+    '— exiting without restart (exit code 2)');
+  process.exit(2);
+}
+
 client.login(process.env.DISCORD_BOT_TOKEN)
