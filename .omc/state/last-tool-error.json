@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"ls ~/.claude/ | head -30 && echo \\\"---\\\" && cd ~/.claude && git rev-parse --is-inside-work-tree 2>&1\",\"description\":\"Inspect ~/.claude layout\"}",
+  "error": "Exit code 128\nCLAUDE.md\nCLAUDE.md.backup-pre-slim\nCOMANDOS.md\n_backup-pre-esmel-merge-20260514\nagents\naudit-watched-repos.txt\nbackups\ncache\nchannels\nclauditor\ncommands\ndocs\ndownloads\nfile-history\nhistory.jsonl\nhooks\nide\nmcp-needs-auth-cache.json\npaste-cache\nplans\nplugins\npolicy-limits.json\nprojects\nscripts\nsession-env\nsessions\nsettings.json\nsettings.json.bak-20260423-165056\nsettings.local.json\nshell-snapshots\n---\nfatal: not a git repository (or any of the parent directories): .git",
+  "timestamp": "2026-05-21T03:19:50.945Z",
+  "retry_count": 1
+}

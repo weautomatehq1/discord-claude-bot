@@ -1,0 +1,118 @@
+{
+  "repo": "discord-claude-bot",
+  "last_updated": "2026-05-21T03:17:10Z",
+  "open_findings": 6,
+  "by_severity": {
+    "CRITICAL": 1,
+    "IMPORTANT": 4,
+    "COSMETIC": 1
+  },
+  "findings": [
+    {
+      "id": "AUDIT-discord-claude-bot-d42759d8",
+      "severity": "CRITICAL",
+      "category": "risk",
+      "title": "Discord users get unrestricted --dangerously-skip-permissions Claude execution",
+      "detail": "bot.js:61 spawns Claude with `--dangerously-skip-permissions` and passes raw Discord message content as the prompt. Any user in ALLOWED_USERS can instruct Claude to delete files, exfiltrate secrets, run arbitrary shell commands, or modify the host system with zero confirmation gates. The `spawn` call uses array arguments so there is no direct shell injection, but the flag deliberately removes Claude's safety guardrails \u2014 the LLM itself becomes the attack surface.\n\nifleet-handler.js:49 has the same pattern. Both subprocesses receive `{ ...process.env }` (bot.js:63, ifleet-handler.js:51), leaking GITHUB_TOKEN and DISCORD_BOT_TOKEN into the Claude subprocess. Credential exfiltration is trivial if the prompt instructs Claude to read env vars.\n\nEven with a trusted user list, a compromised Discord account or a careless prompt like 'delete everything in WORK_DIR' would execute without any human confirmation.",
+      "file_globs": [
+        "bot.js",
+        "ifleet-handler.js"
+      ],
+      "fix_sketch": "Remove `--dangerously-skip-permissions` and rely on Claude's default permission model. If unattended execution is required, use a scoped permission file that whitelists only safe read-only operations. For the env leak, build a minimal env object containing only PATH, HOME, and CLAUDE_* vars.",
+      "parallel_safe": true,
+      "fingerprint": "a3541670428224825aefa0d93fe4999e156c720dd1218cdc4e90eef1446fe474",
+      "status": "open",
+      "opened_at": "2026-05-21T03:17:10Z",
+      "closed_at": null,
+      "closing_pr": null
+    },
+    {
+      "id": "AUDIT-discord-claude-bot-d4abfcf6",
+      "severity": "IMPORTANT",
+      "category": "logic",
+      "title": "parsePlan uses \\z (literal 'z') instead of $ \u2014 silently truncates plan fields",
+      "detail": "ifleet-handler.js lines 79-82 use `\\z` in regex lookaheads as an end-of-string anchor, but JavaScript RegExp does not support `\\z`. In JS, `\\z` matches the literal character 'z'. This means: (1) if DESCRIPTION text contains the letter 'z', the capture stops at that character, silently truncating; (2) if the next section header is missing entirely, the match returns null instead of capturing to end-of-string.\n\nVerified empirically: 'Initialize the fuzzer' matched against `/DESCRIPTION:\\s*([\\s\\S]*?)(?=^ACCEPTANCE_CRITERIA:|\\z)/m` returns 'Initiali' \u2014 everything after the first 'z' is lost. For inputs without 'z' and without a following section, the match returns null, falling back to empty-string default.\n\nThis affects both DESCRIPTION and ACCEPTANCE_CRITERIA patterns \u2014 plans sent to Discord and GitHub can be silently corrupted.",
+      "file_globs": [
+        "ifleet-handler.js"
+      ],
+      "fix_sketch": "Replace `\\z` with `$` (end-of-string) in both regex patterns. Use a greedy-to-next-header approach: `/^DESCRIPTION:\\s*([\\s\\S]*?)(?=^[A-Z_]+:|$)/m`. Test with inputs containing 'z' and inputs missing subsequent sections.",
+      "parallel_safe": true,
+      "fingerprint": "f5fc66f6fad3ac7fcda901201b1bc5a3e9fd406119ff5b8da6c421498a9cc8fa",
+      "status": "open",
+      "opened_at": "2026-05-21T03:17:10Z",
+      "closed_at": null,
+      "closing_pr": null
+    },
+    {
+      "id": "AUDIT-discord-claude-bot-45b5a922",
+      "severity": "IMPORTANT",
+      "category": "logic",
+      "title": "Env var naming collision: IFLEET_OWNER vs IFLEET_REPO_OWNER for the same concept",
+      "detail": "ifleet-handler.js:6 reads `IFLEET_OWNER` and ifleet-issuer.js:7 reads `IFLEET_REPO_OWNER` \u2014 both represent the GitHub repository owner but use different env var names. .env.example lines 9-10 vs 14-15 show both sets. The handler stores `entry.owner` from IFLEET_OWNER; the issuer falls back to DEFAULT_OWNER from IFLEET_REPO_OWNER.\n\nSimilarly, ifleet-handler.js:7 reads `IFLEET_REPO` while ifleet-issuer.js:8 reads `IFLEET_REPO_NAME`. If a user sets only one pair, handler and issuer disagree on which repo to target. Current code happens to work but only by accident. Any refactor that removes 'duplicate' vars breaks issue creation silently.",
+      "file_globs": [
+        "ifleet-handler.js",
+        "ifleet-issuer.js",
+        ".env.example"
+      ],
+      "fix_sketch": "Consolidate to a single pair of env var names (e.g., IFLEET_OWNER and IFLEET_REPO) used by both files. Extract env reading into a shared config module. Update .env.example to remove duplicates.",
+      "parallel_safe": true,
+      "fingerprint": "b0d635848d9aadbdd4baf74ec155b64b08f39cce59338fb077bbbd03fb0ac71b",
+      "status": "open",
+      "opened_at": "2026-05-21T03:17:10Z",
+      "closed_at": null,
+      "closing_pr": null
+    },
+    {
+      "id": "AUDIT-discord-claude-bot-10b0bdf3",
+      "severity": "IMPORTANT",
+      "category": "risk",
+      "title": "pendingApprovals Map grows unboundedly \u2014 no TTL, no size cap",
+      "detail": "ifleet-handler.js:10 creates a `new Map()` for pending approvals. Entries are added at line 161 on every @ifleet mention but only removed when a user reacts with checkmark. Plans generated but never approved (the common case during testing) accumulate indefinitely.\n\nEach entry stores the full issue body text, original request, and metadata. Over days/weeks under PM2, this is a memory leak. Stale approvals remain actionable: a user could react to a week-old plan and it would still create a GitHub issue with outdated context. The `createdAt` timestamp is stored but never read.",
+      "file_globs": [
+        "ifleet-handler.js",
+        "ifleet-issuer.js"
+      ],
+      "fix_sketch": "Add a TTL check in the reaction handler (reject approvals older than 30 minutes). Add a periodic sweep (setInterval every 10 minutes) that deletes stale entries. Optionally cap the Map size to prevent runaway growth.",
+      "parallel_safe": true,
+      "fingerprint": "138b32b036ee1704a44286a3710c15b67b8641f9cf8412276570d0e5cea54958",
+      "status": "open",
+      "opened_at": "2026-05-21T03:17:10Z",
+      "closed_at": null,
+      "closing_pr": null
+    },
+    {
+      "id": "AUDIT-discord-claude-bot-69124886",
+      "severity": "IMPORTANT",
+      "category": "risk",
+      "title": "GitHub API response status code is never checked \u2014 silent failures on 403/422/500",
+      "detail": "ifleet-issuer.js lines 26-41 handle the GitHub API response by only parsing the JSON body. The HTTP status code (`res.statusCode`) is never examined. The code relies on `issue.errors || !issue.number` at line 89 to detect failures.\n\nA 5xx response or network-level error that returns non-JSON (e.g., HTML error page from a proxy) will cause `JSON.parse(raw)` at line 30 to throw, surfacing the raw HTML body in the error message to Discord \u2014 potentially leaking infrastructure details.",
+      "file_globs": [
+        "ifleet-issuer.js"
+      ],
+      "fix_sketch": "Check `res.statusCode` before parsing. If not 2xx, reject with a sanitized error message that includes only the status code. Add a guard around JSON.parse to truncate the raw body in error messages (first 200 chars).",
+      "parallel_safe": true,
+      "fingerprint": "8b2ad20b03ef2db41b2d578e86296febe58ab9a2576151bb712c6629a8cba118",
+      "status": "open",
+      "opened_at": "2026-05-21T03:17:10Z",
+      "closed_at": null,
+      "closing_pr": null
+    },
+    {
+      "id": "AUDIT-discord-claude-bot-4e293419",
+      "severity": "COSMETIC",
+      "category": "risk",
+      "title": "No graceful shutdown or unhandled-rejection handler \u2014 PM2 restarts mask crashes",
+      "detail": "bot.js has no `process.on('unhandledRejection')` or `process.on('SIGTERM')` handler. The `message.reply(chunk)` call at bot.js:76 inside `proc.on('close')` is not wrapped in try/catch \u2014 if the Discord channel is deleted or the bot loses permissions, the unhandled rejection crashes the process. PM2 restarts but active Claude subprocesses are orphaned.\n\nSimilarly, `client.login()` at bot.js:86 has no `.catch()` \u2014 invalid token = unhandled rejection crash with raw stack trace.",
+      "file_globs": [
+        "bot.js"
+      ],
+      "fix_sketch": "Add `.catch()` to `client.login()`. Wrap reply loop in try/catch. Add `process.on('unhandledRejection', (err) => console.error(err))`. Add SIGTERM handler that calls `client.destroy()` for graceful shutdown.",
+      "parallel_safe": true,
+      "fingerprint": "d6f078a8444b880aeba5deffef4ba18620c921f1c8c6dfaa9b4abd27faba9354",
+      "status": "open",
+      "opened_at": "2026-05-21T03:17:10Z",
+      "closed_at": null,
+      "closing_pr": null
+    }
+  ]
+}
